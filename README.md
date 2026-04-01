@@ -142,6 +142,12 @@ New-NetFirewallRule -DisplayName "AWK-C2-Inbound" `
 Get-NetFirewallRule -DisplayName "AWK-C2-Inbound" | Select-Object DisplayName, Enabled, Profile, Direction, Action
 ```
 
+### Closing All PowerShell tasks for proper connections
+```
+Get-Process | Where-Object {$_.Name -like "powershell"} | Stop-Process -Force
+
+```
+
 ---
 
 ## 🎯 Attacker Setup
